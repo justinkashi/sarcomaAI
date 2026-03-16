@@ -1,3 +1,123 @@
-Initial Concerns and Key QuestionsBefore proceeding, there are three critical technical gaps we must address with Dr. Bozzo and the MSKCC/MUHC teams:Digitization Status: Are the H&E slides for the 287 MSKCC patients already digitized as Whole Slide Images (WSIs) in formats like .svs, .tif, or .ndpi? If they are still physical glass slides, the "Data Extraction" phase will be significantly longer.Slide-Radiology Mapping: Does a mapping file exist that links specific pathology slide IDs to the de-identified Patient IDs already in the XNAT imaging database?Compute Resources: Virchow 2 (ViT-H) has 632 million parameters, and the G-version has 1.9 billion. While the weights are frozen, generating embeddings for thousands of tiles per patient is GPU-intensive. Does our current AWS stack (G4dn/G5 instances) have the VRAM and storage to handle terabytes of pathology data?Implementation Plan: Integrating Virchow 2 into SarcomaAIThis plan outlines the transition from Version 0.1 (Clinical+Radiology) to Version 0.2 (Clinical+Radiology+Pathology).Phase 1: Data Sourcing and Ingestion (The "Pathology Playbook" Update)The current Playbook v0.1 focuses on DICOM and PACS extraction. We must establish a parallel track for pathology.Extraction from LIS/VNA: Unlike the radiology PACS, digital pathology is often stored in a Vendor Neutral Archive (VNA) or a system like Leica Aperio eSlide Manager. We will use the same findscu logic mentioned in the playbook to query the pathology database for matched cases.File Format Standardization: WSIs should be stored in a hierarchical format. If we use the S3 storage architecture from the Playbook, we will create a /pathology prefix in the S3 bucket alongside /mri.Pathology De-identification: We will extend the "Anonymization Script" logic. For WSIs, this means scrubbing metadata and potentially cropping out "label" areas of the image that often contain physical barcodes or patient stickers.Phase 2: Pathology Preprocessing (Tiling & Filtering)A single WSI can be 10GB+. We cannot feed this into a neural network directly.Tissue Segmentation: Following the Virchow 2 paper, we will implement a tissue-detection filter. We use an HSV (Hue, Saturation, Value) filter or Otsu thresholding to identify actual tissue regions and discard "white space" (background).Tiling/Patching: We will slice each slide into $224 \times 224$ pixel patches at 20x magnification.Color Normalization: While the Virchow 2 paper notes robustness to staining variation , the SarcomaAI project's commitment to "Standardization" (like N4 bias correction for MRI) suggests we should perform Macenko stain normalization on patches to ensure institutional consistency between MSKCC and MUHC.Phase 3: Feature Extraction with Virchow 2This stage uses Virchow 2 as a "frozen" encoder, meaning we don't train it; we just use its "eyes."The Encoder: We will load the paige-ai/Virchow2 (ViT-H/14) weights from HuggingFace.Embedding Generation: Each $224 \times 224$ tile is passed through the model.The CLS+Mean Strategy: To maximize accuracy, we will follow the authors' recommendation to concatenate the class token with the mean of all patch tokens.For Virchow 2, this results in a 2,560-dimension vector per tile ($1,280 \times 2$).Storage of Embeddings: To save compute time during training, we will save these vectors as .h5 files.Phase 4: Multiple Instance Learning (MIL) HeadSince one patient has thousands of tile vectors but only one survival outcome, we need a "bridge."The MIL Layer: We will add an Attention-based MIL module (as seen in models like PS3 or SurvPath) to the multimodal_model.py script from the project's GitHub.Mechanism: This layer assigns an "importance weight" to every tile. It learns to ignore necrotic or non-informative patches and focus on high-grade areas (e.g., pleomorphic cells or high mitotic counts) .Output: The MIL head "squashes" the thousands of tile vectors into one single 128-dimension slide embedding.Phase 5: 3-Branch Model Architecture & TrainingWe will now modify the existing MMNN_STS architecture.The 3rd Branch: In multimodal_model.py, we add a pathology_subnetwork class.The Fusion Point: The Late Blending layer will now concatenate three vectors instead of two :Clinical Vector (12-dim)MRI Vector (12-dim)Pathology Vector (128-dim)Scaling Gradient Blending: We must update the loss formula to prevent the high-dimensional pathology data from causing the model to ignore the clinical variables :
+# Implementation Plan: Integrating Virchow 2 into the SarcomaAI Framework
+
+This plan outlines the transition of the SarcomaAI project from its current 2-branch model (Clinical + Radiology) to a 3-branch multimodal framework (Clinical + Radiology + Pathology) leveraging the **Virchow 2** vision transformer foundation model.
+
+## Preliminary Technical Gaps and Questions
+
+Before initiating the pipeline, the following items must be clarified with the institutional leads at MSKCC and MUHC:
+
+1. **Slide Digitization:** Are the H&E slides for the primary 287-patient cohort already digitized as Whole Slide Images (WSIs) in standard formats (e.g., `.svs`, `.tif`, `.ndpi`)? 
+
+
+2. **Mapping Integrity:** Is there a validated cross-reference file that links pathology slide IDs to the de-identified Patient IDs currently stored in the **XNAT v1.8** server? 
+
+
+3. **Compute Infrastructure:** Virchow 2 (ViT-H) contains 632 million parameters. Does the project's AWS stack (G4dn/G5 instances) have the VRAM necessary to load the frozen model and the storage capacity for terabytes of resulting embeddings? 
+
+
+
+---
+
+## Phase 1: Data Sourcing and Ingestion (The Pathology Track)
+
+The current SarcomaAI Playbook focuses on DICOM/PACS extraction. This phase establishes the parallel ingestion pipeline for digitized histopathology.
+
+* **Extraction from LIS/VNA:** Digitized slides are typically managed in a Laboratory Information System (LIS) or Vendor Neutral Archive (VNA). We will utilize the hierarchical query logic (Patient -> Study -> Slide) to identify and export matched cases. 
+
+
+* **Secure Cloud Storage:** Within the AWS architecture outlined in the Playbook, a new `/pathology` prefix will be created in the private S3 bucket to store raw WSIs alongside the existing `/mri` data. 
+
+
+* **De-identification:** WSIs will be programmatically scrubbed of metadata. We must also implement a cropping step to remove the "label" area of the slides, which often contains physical patient identifiers. 
+
+
+
+## Phase 2: Pathology Preprocessing (Tiling & Filtering)
+
+Whole slide images are gigapixel files that cannot be processed by neural networks in their entirety.
+
+* **Tissue Segmentation:** We will implement an HSV-based filter or Otsu thresholding (thresholds of $0.4$, $0.5$) to identify regions of interest (ROI) containing actual tissue while discarding non-informative white background. 
+
+
+* **Tiling (Patching):** Slides will be partitioned into **$224 \times 224$** pixel patches. Following the Virchow 2 methodology, we will perform extraction at 20x magnification to capture cellular detail and mitotic activity. 
+
+
+* **Stain Normalization:** To maintain institutional consistency (MSKCC vs. MUHC), we will apply Macenko stain normalization to the patches, mirroring the role of N4 bias correction in the imaging pipeline. 
+
+
+
+## Phase 3: Feature Extraction with Virchow 2
+
+This phase treats Virchow 2 as a "frozen" encoder, using its weights to translate morphology into mathematical vectors.
+
+* **Model Loading:** We will load the `paige-ai/Virchow2` (ViT-H/14) weights from HuggingFace.
+
+
+* **Embedding Configuration:** We will use the authors' recommended **CLS+Mean** configuration. For each tile, the model will concatenate the class token with the mean of the patch tokens, resulting in a **$2,560$-dimension** vector ($1,280 \times 2$). 
+
+
+* **Vector Storage:** Extracted vectors will be saved as `.h5` files to minimize redundant computation during the subsequent training of the multimodal head. 
+
+
+
+## Phase 4: Multiple Instance Learning (MIL) Head
+
+Since each patient has thousands of tile vectors but only one survival outcome, we must aggregate the data.
+
+* **MIL Architecture:** We will integrate an **Attention-based MIL** module into the model's codebase.
+* **Learning Importance:** This layer learns to assign high "importance weights" to tiles showing aggressive features (e.g., high nuclear atypia or pleomorphism) while ignoring background or necrotic tissue.
+* **Bottleneck Reduction:** The MIL head will "squash" the thousands of tile-level embeddings into a single **$128$-dimension slide vector** to balance the modality weights during fusion. 
+
+
+
+## Phase 5: 3-Branch Model Architecture & Training
+
+We will modify the existing **MMNN_STS** code to support the third modality.
+
+* **Subnetwork Integration:** A new `PathologySubnetwork` class will be added to the project's `multimodal_model.py` script.
+
+
+* **Late Fusion Point:** The fusion layer will now concatenate three distinct vectors before entering the CoxPH prediction head:
+* Clinical Vector ($12$-dim) 
+
+
+* MRI Vector ($12$-dim) 
+
+
+* Pathology Vector ($128$-dim)
+
+
+* **Scaling Gradient Blending:** To combat "modality laziness," the loss formula will be updated to handle four heads (Global + 3 Modal) :
+
+
+
 $$L_{total} = w_{MM}L_{MM} + w_{MRI}L_{MRI} + w_{clin}L_{clin} + w_{path}L_{path}$$
-The training loop will monitor the OGR (Overfitting-to-Generalization Ratio) for all three modality branches every 5 epochs, dynamically weighting the loss to ensure optimal convergence.Phase 6: Federated Deployment (NVFlare)To train this model between MSKCC and McGill without moving WSIs :Local Training: Each institution's "Client Server" (from the Playbook) will run the Virchow 2 extraction and MIL training locally.Weight Exchange: Only the updated weights of the MLP, DenseNet-121, and the new MIL head are sent to the "Central Server" for aggregation via the secure gRPC protocol.Key Technical Checklist for the Team[ ] Libraries: Install torch, timm (for Vision Transformers), openslide-python (for WSI handling), and nvflare.[ ] API Access: Sign the HuggingFace user agreement for paige-ai/Virchow2.[ ] Validation: Use the TCGA-SARC dataset (254 diagnostic H&E slides available on the GDC Portal) as our "sandbox" to test the tiling and MIL logic before Dr. Bozzo grants access to the internal MSKCC files .
+
+
+
+Weights ($w_i$) will be adjusted every 5 epochs based on the **Overfitting-to-Generalization Ratio (OGR)** of the pathology branch. 
+
+
+
+## Phase 6: Federated Deployment (NVFlare)
+
+Training will occur across MSKCC and MUHC sites using **NVIDIA FLARE**.
+
+* **Local Extraction:** Participating sites will run the Virchow 2 extraction and MIL training locally on their own hardware. 
+
+
+* **Secure Aggregation:** Only updated weights of the MIL head, 3D CNN, and MLP will be transmitted to the central server via the secure gRPC protocol, ensuring raw Whole Slide Images never leave their home institution. 
+
+
+
+---
+
+### Implementation Requirements Checklist
+
+* [ ] **Software Stack:** Install `torch`, `timm`, `openslide-python`, `nvflare`, and `SimpleITK`. 
+
+
+* [ ] **Sandbox Dataset:** Use the **TCGA-SARC** cohort ($254$ diagnostic H&E slides and matched MRI/CT scans) as a prototype to validate the tiling and MIL aggregation logic. 
+
+
+* [ ] **API Access:** Ensure team members sign the Paige-AI license agreement on HuggingFace to access the Virchow 2 weights.
