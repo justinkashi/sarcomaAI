@@ -147,8 +147,10 @@ def extract_tiles(slide, tissue_mask, seg_downsample, target_downsample):
 def extract_embeddings(tiles, batch_size=32):
     """Run tiles through Virchow 2 and return (N, 2560) embeddings."""
     all_embeddings = []
+    num_batches = (len(tiles) + batch_size - 1) // batch_size
 
-    for i in range(0, len(tiles), batch_size):
+    for batch_idx, i in enumerate(range(0, len(tiles), batch_size)):
+        print(f"  Batch {batch_idx + 1}/{num_batches} ({i + min(batch_size, len(tiles) - i)}/{len(tiles)} tiles)", end="\r")
         batch_pils = tiles[i : i + batch_size]
         batch_tensors = torch.stack([transforms(img) for img in batch_pils]).to(DEVICE)
 
@@ -161,6 +163,7 @@ def extract_embeddings(tiles, batch_size=32):
         embedding = torch.cat([class_token, mean_patch], dim=-1)  # (B, 2560)
         all_embeddings.append(embedding.cpu())
 
+    print()  # newline after progress
     return torch.cat(all_embeddings, dim=0)  # (N_tiles, 2560)
 
 
