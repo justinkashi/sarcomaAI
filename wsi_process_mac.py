@@ -5,6 +5,7 @@
 #pip install timm
 #pip install huggingface_hub
 #pip install openslide-python       # WSI reading (brew install openslide first on mac)
+#pip install openslide-bin
 #pip install Pillow
 #pip install h5py                   # saving tile embeddings
 #pip install scikit-image           # Otsu thresholding for tissue segmentation
