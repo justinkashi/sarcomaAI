@@ -1,4 +1,4 @@
-# Implementation Plan: Integrating Virchow 2 into the SarcomaAI Framework
+# OVERALL PLAN 
 
 This plan outlines the transition of the SarcomaAI project from its current 2-branch model (Clinical + Radiology) to a 3-branch multimodal framework (Clinical + Radiology + Pathology) leveraging the **Virchow 2** vision transformer foundation model.
 
@@ -95,7 +95,9 @@ $$L_{total} = w_{MM}L_{MM} + w_{MRI}L_{MRI} + w_{clin}L_{clin} + w_{path}L_{path
 
 
 
-Weights ($w_i$) will be adjusted every 5 epochs based on the **Overfitting-to-Generalization Ratio (OGR)** of the pathology branch. 
+Weights ($w_i$) will be adjusted every 5 epochs based on the **Overfitting-to-Generalization Ratio (OGR)** of the pathology branch.
+
+JUSTIN NOTE: I am not sure about this section of combatting modality laziness. 
 
 
 
@@ -107,17 +109,3 @@ Training will occur across MSKCC and MUHC sites using **NVIDIA FLARE**.
 
 
 * **Secure Aggregation:** Only updated weights of the MIL head, 3D CNN, and MLP will be transmitted to the central server via the secure gRPC protocol, ensuring raw Whole Slide Images never leave their home institution. 
-
-
-
----
-
-### Implementation Requirements Checklist
-
-* [ ] **Software Stack:** Install `torch`, `timm`, `openslide-python`, `nvflare`, and `SimpleITK`. 
-
-
-* [ ] **Sandbox Dataset:** Use the **TCGA-SARC** cohort ($254$ diagnostic H&E slides and matched MRI/CT scans) as a prototype to validate the tiling and MIL aggregation logic. 
-
-
-* [ ] **API Access:** Ensure team members sign the Paige-AI license agreement on HuggingFace to access the Virchow 2 weights.
