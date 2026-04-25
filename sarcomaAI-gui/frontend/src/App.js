@@ -1,12 +1,20 @@
-import React, { useState } from "react";
-import "./App.css";
-import T1T2Selector from "./components/T1T2Selector";
+import React, { useEffect } from 'react';
+import { AppProvider, useApp } from './context/AppContext';
+import { initCornerstone } from './utils/initCornerstone';
+import SetupWizard from './components/SetupWizard';
+import MainLayout from './components/MainLayout';
+
+function AppInner() {
+  const { isConfigured } = useApp();
+  return isConfigured ? <MainLayout /> : <SetupWizard />;
+}
 
 function App() {
+  useEffect(() => { initCornerstone(); }, []);
   return (
-    <div style={{ padding: "2rem" }}>
-      <T1T2Selector />
-    </div>
+    <AppProvider>
+      <AppInner />
+    </AppProvider>
   );
 }
 
