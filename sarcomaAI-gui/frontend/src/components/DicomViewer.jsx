@@ -90,16 +90,17 @@ export default function DicomViewer() {
   const hasContent = currentPatient && currentStudy && currentSeries;
 
   return (
-    <div style={{ flex: 1, background: '#000', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div
-        ref={divRef}
-        style={{ width: '100%', height: '100%', display: hasContent ? 'block' : 'none' }}
-      />
+    <div style={{ flex: 1, background: '#000', position: 'relative', overflow: 'hidden' }}>
+      {/* Always rendered so Cornerstone gets real dimensions on init */}
+      <div ref={divRef} style={{ width: '100%', height: '100%' }} />
 
+      {/* Placeholder overlay — sits on top until a series is selected */}
       {!hasContent && (
-        <div style={{ color: 'var(--text-secondary)', fontSize: 14, textAlign: 'center' }}>
-          <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }}>◫</div>
-          Select a series from the sidebar
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', pointerEvents: 'none' }}>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 14, textAlign: 'center' }}>
+            <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }}>◫</div>
+            Select a series from the sidebar
+          </div>
         </div>
       )}
 

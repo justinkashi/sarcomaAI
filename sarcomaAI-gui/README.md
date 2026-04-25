@@ -1,209 +1,214 @@
 # SarcomaAI GUI
 
-A web-based tool for selecting T1/T2 MRI series from DICOM datasets, then running anonymization and NIfTI conversion as part of the SarcomaAI 2.0 data pipeline.
+A medical imaging workstation for selecting T1/T2 MRI series from DICOM datasets and running the SarcomaAI anonymization + NIfTI conversion pipeline. Built with React + Cornerstone3D (frontend) and Flask (backend).
 
 ---
 
-## 1. Usage
+## Prerequisites
 
-### What you need
+You need three things installed before starting:
 
-- Python venv with Flask installed (the project uses `mmnn2` at `/Users/bustin/sarcomaAI/mmnn2`)
-- Node.js + npm for the React frontend
-- A DICOM dataset folder structured as `DICOM/PA######/ST######/SE######/`
-
-### Running locally
-
-Everything runs on your own machine. There is no remote server — the "website" is a React dev server on `localhost:3000` talking to a Flask API on `localhost:5050`.
-
-**Step 1 — Start the backend**
-
+### 1. Python 3.11+
 ```bash
-source /Users/bustin/sarcomaAI/mmnn2/bin/activate
-cd sarcomaAI-gui/backend
-python App.py
-# Flask starts at http://localhost:5050
+python3 --version
+```
+If not installed: https://www.python.org/downloads/
+
+### 2. Node.js + npm
+```bash
+node --version
+npm --version
+```
+If not installed:
+```bash
+brew install node
+```
+Or download from https://nodejs.org
+
+### 3. A Python virtual environment with dependencies
+
+Create a venv and install required packages:
+```bash
+cd sarcomaAI-gui
+python3 -m venv venv
+source venv/bin/activate
+pip install flask flask-cors pydicom matplotlib SimpleITK
+pip install "pyCERR[napari] @ git+https://github.com/cerr/pyCERR"
 ```
 
-**Step 2 — Start the frontend** (in a second terminal)
+> `pyCERR` is large and takes 5–10 minutes. It's required for N4 bias correction and NIfTI output. Without it the pipeline still runs but skips normalization and NIfTI export.
+
+---
+
+## Running the App
+
+You need **two terminals open at the same time** — one for the backend, one for the frontend.
+
+### Terminal 1 — Backend
+
+```bash
+cd sarcomaAI-gui/backend
+source ../venv/bin/activate      # activate your venv
+python App.py
+```
+
+You should see:
+```
+* Running on http://0.0.0.0:5050
+* Debug mode: on
+```
+
+### Terminal 2 — Frontend
 
 ```bash
 cd sarcomaAI-gui/frontend
-npm install      # first time only
+npm install        # first time only — downloads dependencies (~2 min)
 npm start
-# React dev server opens http://localhost:3000 in your browser automatically
 ```
 
-Both processes must be running at the same time.
+The browser opens automatically at `http://localhost:3000`.
 
-### Using the app
-
-**Setup wizard (first screen)**
-
-Fill in all four fields before continuing:
-
-| Field | What to enter |
-|---|---|
-| Institution | Select your site from the dropdown |
-| DICOM folder | Full absolute path to the folder containing PA-numbered subfolders, e.g. `/data/Dataset/DICOM` |
-| New or existing dataset | Choose whether this is a fresh SarcomaAI dataset or adding to one that already exists |
-| SarcomaAI dataset path | Full absolute path to where the processed output should go (new), or where it already lives (existing) |
-
-Click **Confirm Setup** — the backend validates both paths exist before proceeding.
-
-**Series selection (main screen)**
-
-- Use the patient and study dropdowns to navigate
-- Click a series button on the left to load its slices in the viewer
-- Scrub through slices with the slider or arrow keys (← →)
-- Click **Select as T1** or **Select as T2** to tag the current series
-- T1 tags appear as a red badge, T2 as blue
-- Selections are saved to `selections.csv` inside your DICOM folder as you go — you can close and reopen the app without losing progress
-
-**Running the pipeline**
-
-Once every patient/study has both a T1 and T2 selected, a green **Start Pipeline** button appears in the bottom-right corner. Clicking it:
-
-1. Copies the selected DICOM series into the SarcomaAI dataset folder with anonymized patient IDs (`PA######`)
-2. Strips all 36 sensitive DICOM tags (dates, names, IDs) and replaces them with placeholders
-3. Injects a traceability ID (`sts.INSTITUTION.######.t1/t2`) into the Clinical Trial Subject ID tag
-4. Runs N4 bias field correction and Z-score normalization
-5. Exports a `.nii` NIfTI file per series
-6. Appends a row to `ledger.csv` linking the anonymized ID back to institution/MRN
-
-A status panel appears at the bottom showing pipeline logs. Green = success, red = something failed (stderr is shown).
-
-### Stopping
-
-`Ctrl+C` in each terminal window stops the backend and frontend.
+> Both processes must stay running. If you close either terminal the app stops working.
 
 ---
 
-## 2. Design
+## Using the App
 
-### Architecture overview
+### Step 1 — Setup Wizard
 
+The first screen asks for four things:
+
+| Field | What to enter |
+|---|---|
+| **Institution** | Select your site from the dropdown |
+| **DICOM Folder Path** | Full absolute path to the folder containing your PA-numbered patient subfolders |
+| **Dataset type** | New dataset (first time) or Existing dataset (adding more patients) |
+| **STS Dataset Path** | Full absolute path to where the processed output should go |
+
+**What the DICOM folder should look like:**
 ```
-Browser (localhost:3000)
-        |
-        |  HTTP (fetch)
-        v
-Flask API (localhost:5050)          ← App.py
-        |
-        |  subprocess.run()
-        v
-Python Pipeline (python_pipeline/)  ← pipeline.py
-        |
-        |  reads/writes
-        v
-Filesystem (DICOM folder, STS dataset folder, ledger.csv)
-```
-
-Everything is local. The browser never touches the filesystem directly — it talks to Flask, which talks to the filesystem and the pipeline.
-
-### Component map
-
-```
-sarcomaAI-gui/
-├── backend/
-│   └── App.py                  Flask API — all routes live here
-│
-├── frontend/
-│   └── src/
-│       └── components/
-│           └── T1T2Selector.jsx   Entire UI — wizard + viewer + pipeline trigger
-│
-└── python_pipeline/
-    ├── config.py               Reads runtime_config.json (written by /api/setup)
-    ├── pipeline.py             Orchestrates the full processing run
-    ├── series_select.py        Copies selected DICOM series, assigns PA###### IDs
-    ├── ledger.py               Crash-tolerant row-by-row ledger append
-    ├── dicom/
-    │   ├── dicom_anonymize.py  Scrubs sensitive tags using sensitive_fields.json
-    │   ├── dicom_tags.py       Extracts MRN, injects STS traceability name
-    │   └── dicom_copy.py       Atomic file copy
-    └── imaging/
-        ├── imaging_normalize.py  N4 bias correction + Z-score via SimpleITK/pyCERR
-        └── imaging_io.py         Atomic NIfTI write
+/your/path/DICOM/
+    PA000001/
+        ST000001/
+            SE000001/   ← individual DICOM files live here
+            SE000002/
+    PA000002/
+        ...
 ```
 
-### How the wizard wires to the pipeline
+The path you enter should point to the `DICOM/` folder itself (the one containing PA-numbered subfolders).
 
-The browser cannot read absolute file paths from the filesystem for security reasons — native file pickers only give you the file name, not the full path. That is why the wizard uses plain text inputs where you type the path yourself.
+Click **Confirm Setup**. The backend validates that both paths exist on disk before proceeding. If you see a red error, check that the paths are correct and the folder exists.
 
-When you click **Confirm Setup**, the frontend POSTs to `/api/setup`:
+> Your paths are saved in the browser (localStorage) so the wizard pre-fills them on your next visit.
 
-```json
-{
-  "institution": "002",
-  "dicomFolder": "/data/Dataset/DICOM",
-  "stsDataset":  "/data/STS_Dataset",
-  "isNewDataset": true
-}
+---
+
+### Step 2 — Select T1 and T2 for Each Patient
+
+The main screen has three panels:
+
+**Left — Patient Sidebar**
+- Lists all patients found in your DICOM folder
+- Status dots: 🔴 = nothing selected, 🟡 = only T1 or T2, 🟢 = both done
+- Click a patient to expand their studies and series
+- Click a series to load it in the viewer
+
+**Center — DICOM Viewer**
+- Displays the selected series using Cornerstone3D (native DICOM rendering)
+- **Left drag** — adjust Window/Level (brightness/contrast)
+- **Right drag** — zoom
+- **Middle drag** — pan
+- **Scroll wheel** — move through slices
+
+**Right — Series Info**
+- Shows metadata: series description, slice count, thickness, date, modality
+- **Auto-suggest**: if the series description contains keywords like `T1`, `VIBE`, `T2`, `SPACE` etc., a suggestion badge appears
+- Shows current T1/T2 assignment for this patient
+- **Mark as T1** / **Mark as T2** buttons to tag the current series
+
+**Keyboard shortcuts:**
+| Key | Action |
+|---|---|
+| `1` | Mark current series as T1 |
+| `2` | Mark current series as T2 |
+| `→` | Next series |
+| `↓` | Next patient |
+
+Selections save automatically after each click — a **Saved ✓** indicator flashes in the top-right of the Series Info panel. You can close the app and resume later without losing progress.
+
+Once you mark both T1 and T2 for a patient, the app automatically advances to the next incomplete patient.
+
+---
+
+### Step 3 — Run the Pipeline
+
+When all patients have both T1 and T2 selected, the **Run Pipeline** button in the top bar turns green.
+
+Click it → confirm the prompt → the pipeline runs and a log panel slides up from the bottom showing live output.
+
+**What the pipeline does:**
+1. Copies selected DICOM series into the STS dataset folder with anonymized IDs (`PA######`)
+2. Extracts the MRN and injects a traceability name (`sts.INSTITUTION.######.t1/t2`) into the DICOM header
+3. Strips all 36 sensitive DICOM tags (patient name, dates, institution, etc.)
+4. Runs N4 bias field correction and Z-score normalization
+5. Exports a `.nii` NIfTI file per series
+6. Appends a row to `ledger.csv`
+
+**Output folder structure:**
+```
+STS_Dataset/
+    DICOM/
+        PA000001/ST000001/SE000003/    ← anonymized DICOM files
+    sts.002/
+        sts.002.000001/
+            sts.002.000001.t1.nii      ← normalized NIfTI
+            sts.002.000001.t2.nii
+    ledger.csv                         ← links PA###### → real MRN
 ```
 
-The backend validates the paths, then writes `python_pipeline/runtime_config.json`:
+> `ledger.csv` is the only file linking anonymized IDs back to real patient MRNs. Keep it secure and off shared drives.
 
-```json
-{
-  "institution":   "002",
-  "dataset_path":  "/data/Dataset",
-  "sts_dataset":   "/data/STS_Dataset",
-  "selection_csv": "/data/Dataset/DICOM/selections.csv",
-  "is_new_dataset": true
-}
-```
+---
 
-Note: `dataset_path` is the **parent** of the DICOM folder because the pipeline expects `dataset_path/DICOM/PA.../`. The frontend asks for the DICOM folder and the backend computes the parent automatically.
+## Stopping
 
-`config.py` reads this JSON at import time, so the pipeline always picks up the correct paths without any hardcoding.
+`Ctrl+C` in each terminal.
 
-### How series selections are saved
+---
 
-Every time you click Select as T1/T2, the frontend POSTs to `/api/save-selection`. The backend writes to `selections.csv` inside the DICOM folder:
+## Troubleshooting
 
-```
-Patient,Type,Study,Series
-PA000001,T1,ST000001,SE000003
-PA000001,T2,ST000001,SE000005
-```
+**"Confirm Setup" gives an error**
+- Check that the DICOM folder path exists and contains PA-numbered subfolders
+- Check that the STS dataset path exists (create the folder first if needed)
+- Make sure the backend terminal is running
 
-When the pipeline runs, `series_select.py` reads this CSV and uses it to decide what to copy and process.
+**No patients appear after setup**
+- The DICOM folder must contain subfolders named like `PA000001/ST000001/SE000001/`
+- Each SE folder must contain valid DICOM files (not `.dcm` extension required, but must be DICOM format)
 
-### Pipeline data flow
+**Viewer shows black / no image**
+- Click a series in the left sidebar first — the viewer only loads when a series is selected
+- If the image still doesn't appear, check the browser console (F12) for errors
 
-```
-selections.csv
-      |
-series_select.py  →  copies DICOM to STS_Dataset/DICOM/PA######/
-      |
-dicom_tags.py     →  reads MRN, injects sts.002.######.t1 into tag (0012,0040)
-      |
-dicom_anonymize.py →  scrubs 36 sensitive fields in-place
-      |
-imaging_normalize.py → N4 bias correction → percentile clip → Z-score
-      |
-imaging_io.py     →  writes sts.002/sts.002.######.t1.nii  (atomic)
-      |
-ledger.py         →  appends one row to ledger.csv (crash-tolerant)
-```
+**Pipeline fails or produces no NIfTI files**
+- Make sure `SimpleITK` and `pyCERR` are installed in your venv
+- Check the log panel for the specific error — it shows full pipeline output
 
-The ledger schema:
+**Backend crashes on startup**
+- Make sure your venv is activated (`source venv/bin/activate`)
+- Make sure all packages are installed (`pip install flask flask-cors pydicom matplotlib`)
 
-```
-Institution | MRN | Patient | Study | Series | Modality | MMNN Reference
-```
+**`npm start` fails**
+- Run `npm install` first inside the `frontend/` folder
+- Make sure Node.js is installed (`node --version`)
 
-This is the only file that links an anonymized `PA######` back to a real patient MRN. Keep it secure and off any shared drives.
+---
 
-### Can you test with a live/hosted server?
+## Notes for Developers
 
-Right now, no — the app is designed for local use only. The Flask server and the DICOM files must be on the same machine because the pipeline reads directly from the filesystem.
-
-To make it accessible over a network (e.g. one person runs the server and others connect remotely), you would need to:
-
-1. Bind Flask to the machine's local IP instead of `localhost` (`host='0.0.0.0'` is already set)
-2. Other users on the same network point their browser at `http://<server-ip>:3000` and update the `API` constant in `T1T2Selector.jsx` from `localhost:5050` to `<server-ip>:5050`
-3. The DICOM files must still live on the server machine
-
-A full cloud deployment (hosting Flask + React on a remote server with the DICOM data uploaded) is a larger change and requires handling file uploads or a shared network drive — not in scope for now.
+- The backend must be restarted if it crashes — path config is held in memory, not persisted to disk between restarts. Re-running the setup wizard after restart restores it.
+- `selections.csv` is saved inside your DICOM folder and persists across restarts.
+- The `python_pipeline/runtime_config.json` file is written by the backend at setup time and read by the pipeline at run time. Do not edit it manually.
+- Docker support is planned (Jonathan) — this will replace the two-terminal startup with a single double-click launcher.

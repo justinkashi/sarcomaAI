@@ -3,5 +3,5 @@
   "dataset_path": "/Users/bustin/sarcomaAI/dataset",
   "sts_dataset": "/Users/bustin/SarcomaAI/temp",
   "selection_csv": "/Users/bustin/sarcomaAI/dataset/DICOM/selections.csv",
-  "is_new_dataset": false
+  "is_new_dataset": true
 }
