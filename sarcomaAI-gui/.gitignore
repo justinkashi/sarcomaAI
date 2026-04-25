@@ -1,0 +1,20 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+node_modules
+dist
+*.local
+
+# Editor directories and files
+.idea
+.DS_Store
+
+# Exclude Python cache directories
+__pycache__/
+
+# PHI
+PA000002/
+
+selections.csv*
